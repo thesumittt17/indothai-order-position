@@ -22,5 +22,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Build Docker images
+        run: docker compose build
+
+      - name: Start position service
+        run: docker compose up -d position-service
+
+      - name: Wait for position service
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health; then
+              echo "Position service is ready"
+              exit 0
+            fi
+            echo "Waiting for position service..."
+            sleep 2
+          done
+
+          echo "Position service failed to start"
+          docker compose logs position-service
+          exit 1
+
       - name: Run tests
         run: pytest -v
+
+      - name: Show Docker logs
+        if: always()
+        run: docker compose logs
+
+      - name: Stop Docker services
+        if: always()
+        run: docker compose down
