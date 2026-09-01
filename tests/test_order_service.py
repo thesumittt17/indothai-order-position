@@ -2,7 +2,7 @@ import csv
 import httpx
 from unittest.mock import patch
 
-from order_service.main import validate_event, process_csv
+from order_service.main import validate_event, process_csv, main
 
 
 def test_valid_row():
@@ -122,12 +122,6 @@ def test_non_integer_quantity():
     assert error == "quantity must be an integer"
 
 
-    import csv
-from unittest.mock import patch
-
-from order_service.main import process_csv
-
-
 def test_invalid_row_does_not_stop_processing(tmp_path):
     csv_file = tmp_path / "orders.csv"
 
@@ -184,7 +178,6 @@ def test_invalid_row_does_not_stop_processing(tmp_path):
         )
 
     assert len(sent_events) == 2
-
     assert sent_events[0]["event_id"] == "evt-001"
     assert sent_events[1]["event_id"] == "evt-003"
 
@@ -241,3 +234,85 @@ def test_http_failure_does_not_stop_processing(tmp_path):
         )
 
     assert len(sent_events) == 2
+
+
+def test_duplicate_event_is_ignored(tmp_path):
+    csv_file = tmp_path / "orders.csv"
+
+    rows = [
+        {
+            "event_id": "evt-001",
+            "symbol": "TCS",
+            "transaction_type": "BUY",
+            "quantity": "100",
+        },
+        {
+            "event_id": "evt-001",
+            "symbol": "TCS",
+            "transaction_type": "BUY",
+            "quantity": "100",
+        },
+        {
+            "event_id": "evt-002",
+            "symbol": "INFY",
+            "transaction_type": "SELL",
+            "quantity": "50",
+        },
+    ]
+
+    with open(csv_file, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "event_id",
+                "symbol",
+                "transaction_type",
+                "quantity",
+            ],
+        )
+
+        writer.writeheader()
+        writer.writerows(rows)
+
+    sent_events = []
+
+    class MockResponse:
+        def raise_for_status(self):
+            pass
+
+    def mock_post(url, json, timeout):
+        sent_events.append(json)
+        return MockResponse()
+
+    with patch("order_service.main.httpx.post", side_effect=mock_post):
+        process_csv(
+            str(csv_file),
+            "http://127.0.0.1:8000",
+            rate=1000,
+        )
+
+    assert len(sent_events) == 2
+    assert sent_events[0]["event_id"] == "evt-001"
+    assert sent_events[1]["event_id"] == "evt-002"
+
+
+def test_main_parses_arguments_and_calls_process_csv():
+    test_args = [
+        "order_service.main",
+        "--file",
+        "data/order_updates.csv",
+        "--url",
+        "http://position-service:8000",
+        "--rate",
+        "100",
+    ]
+
+    with patch("sys.argv", test_args):
+        with patch("order_service.main.process_csv") as mock_process:
+            main()
+
+    mock_process.assert_called_once_with(
+        "data/order_updates.csv",
+        "http://position-service:8000",
+        100.0,
+    )
