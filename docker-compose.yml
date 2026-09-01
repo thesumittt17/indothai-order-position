@@ -1,0 +1,34 @@
+services:
+  position-service:
+    build:
+      context: .
+      dockerfile: position_service/Dockerfile
+    container_name: position-service
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order_service/Dockerfile
+    container_name: order-service
+    depends_on:
+      position-service:
+        condition: service_healthy
+    command:
+      [
+        "python",
+        "-m",
+        "order_service.main",
+        "--file",
+        "data/order_updates.csv",
+        "--url",
+        "http://position-service:8000",
+        "--rate",
+        "50"
+      ]
